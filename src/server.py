@@ -29,7 +29,8 @@ class Server:
         # Initialize wave file to be sent
         self.wf = wave.open(filename, "rb")
         self.audio_length = self.wf.getnframes()/self.wf.getframerate()
-        self.chunk_time = self.get_chunk_time(self.wf)
+        self.num_of_packet = int(self.wf.getframerate() / self.CHUNK_SIZE * self.audio_length) + 1
+        self.chunk_time = 1000*(self.audio_length/self.num_of_packet)
 
         # Initialize start variable
         self.start = False
@@ -266,19 +267,20 @@ class Server:
 
     def get_chunk_time(self, wf):
         # returns chunk time in milliseconds
-        frame_size = wf.getnchannels()*wf.getsampwidth()
-        frame_per_chunk = self.CHUNK_SIZE/frame_size
-
-        num_of_packet = int(wf.getframerate() / self.CHUNK_SIZE * self.audio_length) + 1
+        # frame_size = wf.getnchannels()*wf.getsampwidth()
+        # frame_per_chunk = self.CHUNK_SIZE/frame_size
 
         return 1000*(self.audio_length/num_of_packet)
 
     def create_metapacket(self):
         metadata = struct.pack(
-            "4s2s2s", 
+            "4s2s2s2s2s", 
             self.wf.getframerate().to_bytes(4, byteorder="big"), 
             self.wf.getnchannels().to_bytes(2, byteorder="big"),
-            self.wf.getsampwidth().to_bytes(2, byteorder="big")
+            self.wf.getsampwidth().to_bytes(2, byteorder="big"),
+
+            int(self.audio_length).to_bytes(2, byteorder="big"),
+            self.num_of_packet.to_bytes(2, byteorder="big")
         )
 
         metapacket = Packet(
