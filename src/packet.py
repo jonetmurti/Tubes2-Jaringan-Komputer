@@ -57,12 +57,14 @@ class Packet():
 
     def get_metadata(self):
         # Use this method only if the packet is a metadata
-        unpacked_data = struct.unpack("4s2s2s", self.data)
+        unpacked_data = struct.unpack("4s2s2s2s2s", self.data)
 
         metadata = {
             "framerate": int.from_bytes(unpacked_data[0], "big"),
             "channel": int.from_bytes(unpacked_data[1], "big"),
-            "sampwidth": int.from_bytes(unpacked_data[2], "big")
+            "sampwidth": int.from_bytes(unpacked_data[2], "big"),
+            "audio_length": int.from_bytes(unpacked_data[3], "big"),
+            "num_of_packet": int.from_bytes(unpacked_data[4], "big")
         }
 
         return metadata
