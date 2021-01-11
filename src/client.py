@@ -6,10 +6,12 @@ import pyaudio
 import threading
 import time
 import signal
+import math
 
 class Client:
 
     PACKET_SIZE = 32774
+    CHUNK_SIZE = 1024
     RECEIVER_TIMEOUT = 5
 
     def __init__(self, port):
@@ -37,6 +39,7 @@ class Client:
             self.rec_socket.close()
         except Exception as e:
             print("Error destructor :", e)
+        self.audio_player.terminate()
         print("closing client...")
 
     def interrupt(self, signum, stack_frame):
@@ -44,8 +47,17 @@ class Client:
             self.rec_socket.close()
         except Exception as e:
             print("Error destructor :", e)
-        print("sleeping...")
         print("interrupted")
+
+    def slice(self, packet_num, ratio):
+        self.buffer_lock.acquire()
+        data = self.audio_buffer[packet_num]
+        self.buffer_lock.release()
+
+        divider = int(self.CHUNK_SIZE*ratio)*self.metadata["sampwidth"]*self.metadata["channel"]
+        data = data[divider:]
+
+        return data
 
     def find_server(self):
         self.rec_socket.settimeout(self.RECEIVER_TIMEOUT)
@@ -138,18 +150,27 @@ class Client:
                         self.buffer_lock.release()
                         last_seq_num = seq_num
                         if self.first_run:
+                            self.first_packet = seq_num
                             self.first_run = False
 
             except:
                 break
 
-    def play_audio(self, packet_played, stream, event):
-        # TODO : modified play_audio
+    def play_audio(self, to_be_played, next_packet, stream, event):
 
-        data = None
-        packet = packet_played
+        data = to_be_played
+        packet = next_packet
         retry = 0
+        play = True
+    
         while not event.is_set() and retry < 100:
+            if play:
+                retry = 0
+                stream.write(bytes(data))
+            else:
+                retry += 1
+                time.sleep(0.1)
+
             play = False
             self.buffer_lock.acquire()
             if self.buffer_len > packet:
@@ -157,13 +178,6 @@ class Client:
                 packet += 1
                 play = True
             self.buffer_lock.release()
-
-            if play:
-                retry = 0
-                stream.write(bytes(data))
-            else:
-                retry += 1
-                time.sleep(0.1)
 
     def process(self):
         if self.find_server():
@@ -186,41 +200,57 @@ class Client:
                 while self.first_run:
                     time.sleep(0.1)
 
-                packet_played = 0
+                print("first packet :", self.first_packet)
+
+                time_played = 0
+                self.buffer_lock.acquire()
+                to_be_played = self.audio_buffer[0]
+                self.buffer_lock.release()
+                next_packet = 1
+                ratio = 0.0
 
                 while True:
                     rewind_event = threading.Event()
                     audio_thread = threading.Thread(
                         target=self.play_audio,
-                        args=(packet_played, stream, rewind_event,)
+                        args=(to_be_played, next_packet, stream, rewind_event,)
                     )
                     audio_thread.start()
 
                     accepted = False
                     while not accepted:
                         try:
-                            packet_played = int(input("input packet to rewind (-1 to terminate):"))
+                            time_played = int(input("input packet to rewind (-1 to terminate):"))
                             self.buffer_lock.acquire()
                             buf_len = self.buffer_len
                             self.buffer_lock.release()
-                            if packet_played < -1:
+                            if time_played < -1:
                                 print("Error :", "< -1 not allowed")
                                 continue
-                            elif packet_played >= buf_len:
-                                print("Error :", "data not available")
-                                continue
-                            accepted = True
+                            elif time_played == -1:
+                                accepted = True
+                            else:
+                                temp = time_played*self.metadata["num_of_packet"]/self.metadata["audio_length"]
+                                next_packet = int(temp) + 1 - self.first_packet
+                                ratio = math.modf(temp)[0]
+                                if next_packet < 0 or next_packet >= buf_len: 
+                                    print("Error :", "data not available")
+                                    continue
+                                
+                                accepted = True
                         except:
                             print("input must be an integer")
 
                     rewind_event.set()
                     audio_thread.join()
 
-                    if packet_played == -1:
+                    if time_played == -1:
                         break
 
+                    to_be_played = self.slice(next_packet, ratio)
+                    next_packet += 1
+
                 stream.stop_stream()
-                self.audio_player.terminate()
                 receiver_event.set()
                 receiver_thread.join()
 
