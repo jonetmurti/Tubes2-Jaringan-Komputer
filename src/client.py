@@ -49,6 +49,14 @@ class Client:
             print("Error destructor :", e)
         print("interrupted")
 
+    def terminate(self):
+        try:
+            self.rec_socket.close()
+        except Exception as e:
+            print("Error client termination :", e)
+        self.audio_player.terminate()
+        print("terminate client...")
+
     def slice(self, packet_num, ratio):
         self.buffer_lock.acquire()
         data = self.audio_buffer[packet_num]
@@ -58,6 +66,13 @@ class Client:
         data = data[divider:]
 
         return data
+
+    def get_buffer_len(self):
+        self.buffer_lock.acquire()
+        buf_len = self.buffer_len
+        self.buffer_lock.release()
+
+        return buf_len
 
     def find_server(self):
         self.rec_socket.settimeout(self.RECEIVER_TIMEOUT)
@@ -122,7 +137,7 @@ class Client:
         last_seq_num = 0
         audio_thread = None
 
-        while not event.is_set():
+        while not event.isSet():
             try:
                 announcement = True
                 i = 0
@@ -151,6 +166,7 @@ class Client:
                         last_seq_num = seq_num
                         if self.first_run:
                             self.first_packet = seq_num
+                            self.first_second = ((self.first_packet - 1)*self.metadata["audio_length"]//self.metadata["num_of_packet"]) + 1
                             self.first_run = False
 
             except:
@@ -163,9 +179,12 @@ class Client:
         retry = 0
         play = True
     
-        while not event.is_set() and retry < 100:
+        while not event.isSet() and retry < 100:
             if play:
                 retry = 0
+                # if time.time() - current_time >= 1:
+                #     print("stream time :", stream.get_time())
+                #     current_time = time.time()
                 stream.write(bytes(data))
             else:
                 retry += 1
@@ -179,10 +198,46 @@ class Client:
                 play = True
             self.buffer_lock.release()
 
+    def play_audio_v2(self, next_packet, ratio, event):
+        data = self.slice(next_packet, ratio)
+        packet = next_packet + 1
+        retry = 0
+        play = True
+
+        stream = self.audio_player.open(
+                    format = self.audio_player.get_format_from_width(self.metadata["sampwidth"]),
+                    channels = self.metadata["channel"],
+                    rate = self.metadata["framerate"],
+                    output = True)
+
+        while not event.isSet() and retry < 100:
+            if play:
+                retry = 0
+                # if time.time() - current_time >= 1:
+                #     print("stream time :", stream.get_time())
+                #     current_time = time.time()
+                stream.write(bytes(data))
+            else:
+                retry += 1
+                time.sleep(0.1)
+
+            play = False
+            self.buffer_lock.acquire()
+            if self.buffer_len > packet:
+                data = self.audio_buffer[packet]
+                packet += 1
+                play = True
+            self.buffer_lock.release()
+
+        stream.stop_stream()
+
+    def initiate(self):
+        return self.find_server() and self.receive_metadata()
+
     def process(self):
         if self.find_server():
             if self.receive_metadata():
-                print("playing audio...")
+                print("playing audio", self.metadata["filename"])
 
                 stream = self.audio_player.open(
                     format = self.audio_player.get_format_from_width(self.metadata["sampwidth"]),
@@ -234,7 +289,7 @@ class Client:
                                 next_packet = int(temp) + 1 - self.first_packet
                                 ratio = math.modf(temp)[0]
                                 if next_packet < 0 or next_packet >= buf_len: 
-                                    print("Error :", "data not available")
+                                    print("Error :", "can only play from", self.first_second, "second(s)")
                                     continue
                                 
                                 accepted = True
