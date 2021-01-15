@@ -28,6 +28,7 @@ class Server:
 
         # Initialize wave file to be sent
         self.wf = wave.open(filename, "rb")
+        self.filename = filename
         self.audio_length = self.wf.getnframes()/self.wf.getframerate()
         self.num_of_packet = int(self.wf.getframerate() / self.CHUNK_SIZE * self.audio_length) + 1
         self.chunk_time = 1000*(self.audio_length/self.num_of_packet)
@@ -274,13 +275,14 @@ class Server:
 
     def create_metapacket(self):
         metadata = struct.pack(
-            "4s2s2s2s2s", 
+            "4s2s2s2s2s{}s".format(len(self.filename)), 
             self.wf.getframerate().to_bytes(4, byteorder="big"), 
             self.wf.getnchannels().to_bytes(2, byteorder="big"),
             self.wf.getsampwidth().to_bytes(2, byteorder="big"),
 
             int(self.audio_length).to_bytes(2, byteorder="big"),
-            self.num_of_packet.to_bytes(2, byteorder="big")
+            self.num_of_packet.to_bytes(2, byteorder="big"),
+            self.filename.encode('utf-8')
         )
 
         metapacket = Packet(
